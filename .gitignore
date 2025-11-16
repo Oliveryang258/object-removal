@@ -1,0 +1,15 @@
+# .gitignore
+
+# 忽略所有 PyTorch 模型文件
+*.pth
+*.pt
+
+# 忽略整个 big-lama 目录
+/pretrained_models/big-lama/
+
+# 忽略 Python 缓存
+__pycache__/
+*.pyc
+
+# 忽略 Conda 环境文件
+.conda/
