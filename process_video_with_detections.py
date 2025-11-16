@@ -1,20 +1,31 @@
 # 文件名: process_video_with_detections.py
-# (已修复 NameError)
+# (已修复 FileNotFoundError)
 
 import json
 import argparse
 import os
-# --- 【核心修改点】: 导入 imageio 库 ---
 import imageio
-# ------------------------------------
 from automated_video_remover import AutomatedVideoRemover
+from pathlib import Path # 导入 Path 对象
 
 def main(args):
     print("--- Starting Automated Video Object Removal Pipeline ---")
     
+    # --- 【核心修改点】: 将所有相对路径转换为绝对路径 ---
+    # 获取当前脚本所在的目录
+    script_dir = Path(__file__).resolve().parent
+    
+    # 基于脚本目录构建绝对路径
+    input_video_path = script_dir / args.input_video_path
+    detections_json_path = script_dir / args.detections_json_path
+    output_video_path = script_dir / args.output_video_path
+    sam_ckpt_path = script_dir / args.sam_ckpt
+    vi_ckpt_path = script_dir / args.vi_ckpt
+    # tracker_ckpt 是一个名字，不是路径，所以不需要转换
+
     # 1. 加载检测结果
-    print(f"Loading detections from: {args.detections_json_path}")
-    with open(args.detections_json_path, 'r') as f:
+    print(f"Loading detections from: {detections_json_path}")
+    with open(detections_json_path, 'r') as f:
         detections = json.load(f)
 
     # 2. 筛选出动态对象并按起始帧排序
@@ -28,31 +39,26 @@ def main(args):
     print(f"Found {len(dynamic_objects)} dynamic object(s) to remove.")
 
     # 3. 加载视频到内存
-    print(f"Loading video from: {args.input_video_path}")
+    print(f"Loading video from: {input_video_path}")
     try:
-        # 使用 imageio.mimread 读取所有帧
-        current_frames = imageio.mimread(args.input_video_path, memtest=False)
+        current_frames = imageio.mimread(input_video_path, memtest=False)
         print(f"Video loaded successfully with {len(current_frames)} frames.")
     except Exception as e:
         print(f"Error loading video: {e}")
         return
         
-    # 使用 imageio.v3.immeta 读取元数据（如 fps）
-    # 在较新版本的 imageio 中，推荐使用 v3 接口
     try:
-        fps = imageio.v3.immeta(args.input_video_path, exclude_applied=False).get("fps", 30)
+        fps = imageio.v3.immeta(input_video_path, exclude_applied=False).get("fps", 30)
     except:
-        # 备用方案，如果 v3 接口失败
-        reader = imageio.get_reader(args.input_video_path)
+        reader = imageio.get_reader(input_video_path)
         fps = reader.get_meta_data().get('fps', 30)
         reader.close()
 
-
     # 4. 初始化核心处理器
     model_paths = {
-        'sam': args.sam_ckpt,
-        'ostrack': args.tracker_ckpt,
-        'sttn': args.vi_ckpt
+        'sam': str(sam_ckpt_path), # 传入绝对路径字符串
+        'ostrack': args.tracker_ckpt, # tracker_ckpt 保持不变
+        'sttn': str(vi_ckpt_path)   # 传入绝对路径字符串
     }
     remover = AutomatedVideoRemover(model_paths, sam_model_type=args.sam_model_type)
 
@@ -72,14 +78,11 @@ def main(args):
         )
         print(f"--- Finished processing object {i+1}/{len(dynamic_objects)} ---")
 
-
     # 6. 保存最终视频
-    print(f"\nAll objects processed. Saving final video to: {args.output_video_path}")
-    output_dir = os.path.dirname(args.output_video_path)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    print(f"\nAll objects processed. Saving final video to: {output_video_path}")
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
         
-    imageio.mimwrite(args.output_video_path, current_frames, fps=fps, quality=8)
+    imageio.mimwrite(str(output_video_path), current_frames, fps=fps, quality=8)
     print("✅✅✅ Pipeline complete! ✅✅✅")
 
 
