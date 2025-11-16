@@ -1,9 +1,12 @@
 # 文件名: process_video_with_detections.py
+# (已修复 NameError)
 
 import json
 import argparse
 import os
-import imageio.v2 as iio
+# --- 【核心修改点】: 导入 imageio 库 ---
+import imageio
+# ------------------------------------
 from automated_video_remover import AutomatedVideoRemover
 
 def main(args):
@@ -27,13 +30,23 @@ def main(args):
     # 3. 加载视频到内存
     print(f"Loading video from: {args.input_video_path}")
     try:
-        current_frames = iio.mimread(args.input_video_path, memtest=False)
+        # 使用 imageio.mimread 读取所有帧
+        current_frames = imageio.mimread(args.input_video_path, memtest=False)
         print(f"Video loaded successfully with {len(current_frames)} frames.")
     except Exception as e:
         print(f"Error loading video: {e}")
         return
         
-    fps = imageio.v3.immeta(args.input_video_path, exclude_applied=False).get("fps", 30)
+    # 使用 imageio.v3.immeta 读取元数据（如 fps）
+    # 在较新版本的 imageio 中，推荐使用 v3 接口
+    try:
+        fps = imageio.v3.immeta(args.input_video_path, exclude_applied=False).get("fps", 30)
+    except:
+        # 备用方案，如果 v3 接口失败
+        reader = imageio.get_reader(args.input_video_path)
+        fps = reader.get_meta_data().get('fps', 30)
+        reader.close()
+
 
     # 4. 初始化核心处理器
     model_paths = {
@@ -66,7 +79,7 @@ def main(args):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    iio.mimwrite(args.output_video_path, current_frames, fps=fps, quality=8)
+    imageio.mimwrite(args.output_video_path, current_frames, fps=fps, quality=8)
     print("✅✅✅ Pipeline complete! ✅✅✅")
 
 
