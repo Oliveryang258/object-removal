@@ -1,5 +1,5 @@
 # 文件名: automated_video_remover.py
-# 作用: 核心API (已修复临时文件生命周期问题)
+# (已修复 RuntimeError: "LayerNormKernelImpl" not implemented for 'Half')
 
 import torch
 import torch.nn as nn
@@ -13,11 +13,10 @@ from tqdm import tqdm
 from typing import List
 import sys
 from pathlib import Path
-import shutil # 导入 shutil 用于删除目录
+import shutil
 
-# 动态添加子模块路径到系统路径，确保可以导入
+# 动态添加子模块路径到系统路径
 sys.path.append(str(Path(__file__).resolve().parent))
-# 注意：确保 pytracking 目录在你的项目根目录下
 sys.path.append(str(Path(__file__).resolve().parent / "pytracking"))
 
 from sam_segment import build_sam_model
@@ -51,6 +50,12 @@ class AutomatedVideoRemover(nn.Module):
         start_frame = input_frames[start_frame_index]
         sam_box = np.array([initial_bbox[0], initial_bbox[1], initial_bbox[0] + initial_bbox[2], initial_bbox[1] + initial_bbox[3]])
         
+        # --- 【核心修改点 1】: 确保输入 SAM 的图像是 uint8 ---
+        # SAM 内部会处理数据类型转换，但我们最好给它最标准的输入格式。
+        if start_frame.dtype != np.uint8:
+            start_frame = (start_frame * 255).astype(np.uint8)
+        
+        self.sam_predictor.model.to(torch.float32) # 【核心修改点 2】: 强制模型使用 float32
         self.sam_predictor.set_image(start_frame)
         masks, scores, _ = self.sam_predictor.predict(box=sam_box, multimask_output=True)
         self.sam_predictor.reset_image()
@@ -69,15 +74,8 @@ class AutomatedVideoRemover(nn.Module):
             frame_paths_for_tracker = []
             for i, frame in enumerate(frames_to_track):
                 path = os.path.join(temp_dir_tracker, f"{i:06d}.jpg")
-                
-                # --- 【核心修改点】: 使用 cv2.imwrite 代替 iio.imwrite ---
-                # imageio 默认使用 RGB 顺序，而 cv2 使用 BGR 顺序。
-                # pytracking 内部使用 cv2.imread，所以我们这里也用 cv2.imwrite 来写入，
-                # 并且传入 BGR 格式的图像，以确保完全一致。
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(path, frame_bgr)
-                # ----------------------------------------------------
-                
                 frame_paths_for_tracker.append(path)
 
             seq = Sequence("temp_seq", frame_paths_for_tracker, 'inpaint-anything', np.array(tracker_bbox).reshape(1, 4))
@@ -92,6 +90,10 @@ class AutomatedVideoRemover(nn.Module):
         for i, frame in enumerate(tqdm(frames_to_track[1:], "Segmenting frames")):
             box = all_boxes[i + 1]
             sam_box = np.array([box[0], box[1], box[0] + box[2], box[1] + box[3]])
+            
+            # 确保输入 SAM 的图像是 uint8
+            if frame.dtype != np.uint8:
+                frame = (frame * 255).astype(np.uint8)
 
             self.sam_predictor.set_image(frame)
             masks, scores, _ = self.sam_predictor.predict(box=sam_box, multimask_output=True)
