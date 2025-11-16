@@ -1,4 +1,5 @@
 # 文件名: automated_video_remover.py
+# 作用: 核心API (已修复临时文件生命周期问题)
 
 import torch
 import torch.nn as nn
@@ -12,8 +13,11 @@ from tqdm import tqdm
 from typing import List
 import sys
 from pathlib import Path
+import shutil # 导入 shutil 用于删除目录
 
 # 动态添加子模块路径到系统路径，确保可以导入
+sys.path.append(str(Path(__file__).resolve().parent))
+# 注意：确保 pytracking 目录在你的项目根目录下
 sys.path.append(str(Path(__file__).resolve().parent / "pytracking"))
 
 from sam_segment import build_sam_model
@@ -60,15 +64,26 @@ class AutomatedVideoRemover(nn.Module):
         print("--> Step 1/3: Tracking the object...")
         frames_to_track = input_frames[start_frame_index:]
         
-        with tempfile.TemporaryDirectory() as temp_dir_tracker:
+        temp_dir_tracker = tempfile.mkdtemp()
+        try:
             frame_paths_for_tracker = []
             for i, frame in enumerate(frames_to_track):
                 path = os.path.join(temp_dir_tracker, f"{i:06d}.jpg")
-                iio.imwrite(path, frame)
+                
+                # --- 【核心修改点】: 使用 cv2.imwrite 代替 iio.imwrite ---
+                # imageio 默认使用 RGB 顺序，而 cv2 使用 BGR 顺序。
+                # pytracking 内部使用 cv2.imread，所以我们这里也用 cv2.imwrite 来写入，
+                # 并且传入 BGR 格式的图像，以确保完全一致。
+                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(path, frame_bgr)
+                # ----------------------------------------------------
+                
                 frame_paths_for_tracker.append(path)
 
             seq = Sequence("temp_seq", frame_paths_for_tracker, 'inpaint-anything', np.array(tracker_bbox).reshape(1, 4))
             all_boxes = get_box_using_ostrack(self.ostrack_tracker, seq)
+        finally:
+            shutil.rmtree(temp_dir_tracker)
 
         print("--> Step 2/3: Generating masks for each subsequent frame...")
         all_masks = [initial_mask]
